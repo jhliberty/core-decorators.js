@@ -1,4 +1,4 @@
-import { decorate, createDefaultSetter, getOwnPropertyDescriptors } from './private/utils';
+import { decorate, createDefaultSetter, getOwnPropertyDescriptors, getOwnKeys } from './private/utils';
 const { defineProperty } = Object;
 
 function bind(fn, context) {
@@ -38,20 +38,20 @@ function getBoundSuper(obj, fn) {
   return superStore.get(fn);
 }
 
-function autobindClass(target) {
-  const descs = getOwnPropertyDescriptors(target.prototype);
+function autobindClass(klass) {
+  const descs = getOwnPropertyDescriptors(klass.prototype);
 
-  for (const key in descs) {
+  for (const key of getOwnKeys(descs)) {
     const desc = descs[key];
     if (typeof desc.value !== 'function' || key === 'constructor') {
       continue;
     }
 
-    defineProperty(target.prototype, key, autobindMethod(target, key, desc));
+    defineProperty(klass.prototype, key, autobindMethod(klass.prototype, key, desc));
   }
 }
 
-function autobindMethod(target, key, { value: fn }) {
+function autobindMethod(target, key, { value: fn, configurable, enumerable }) {
   if (typeof fn !== 'function') {
     throw new SyntaxError(`@autobind can only be used on functions, not: ${fn}`);
   }
@@ -59,19 +59,27 @@ function autobindMethod(target, key, { value: fn }) {
   const { constructor } = target;
 
   return {
-    configurable: true,
-    enumerable: false,
+    configurable,
+    enumerable,
 
     get() {
-      // This happens if someone accesses the
-      // property directly on the prototype
+      // Class.prototype.key lookup
+      // Someone accesses the property directly on the prototype on which it is
+      // actually defined on, i.e. Class.prototype.hasOwnProperty(key)
       if (this === target) {
         return fn;
       }
 
-      // This is a confusing case where you have an autobound method calling
-      // super.sameMethod() which is also autobound and so on.
-      if (this.constructor !== constructor && this.constructor.prototype.hasOwnProperty(key)) {
+      // Class.prototype.key lookup
+      // Someone accesses the property directly on a prototype but it was found
+      // up the chain, not defined directly on it
+      // i.e. Class.prototype.hasOwnProperty(key) == false && key in Class.prototype
+      if (this.constructor !== constructor && Object.getPrototypeOf(this).constructor === constructor) {
+        return fn;
+      }
+
+      // Autobound method calling super.sameMethod() which is also autobound and so on.
+      if (this.constructor !== constructor && key in this.constructor.prototype) {
         return getBoundSuper(this, fn);
       }
 

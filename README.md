@@ -1,5 +1,5 @@
 # core-decorators.js [![Build Status](https://travis-ci.org/jayphelps/core-decorators.js.svg?branch=master)](https://travis-ci.org/jayphelps/core-decorators.js)
-Library of [JavaScript decorators](https://github.com/wycats/javascript-decorators) (aka ES2016/ES7 decorators) inspired by languages that come with built-ins like @​override, @​deprecate, @​autobind, @​mixin and more. Popular with React/Angular, but is framework agnostic. Similar to [Annotations in Java](https://docs.oracle.com/javase/tutorial/java/annotations/predefined.html) but unlike Java annotations, decorators are functions which are applied at runtime.
+Library of [JavaScript stage-0 decorators](https://github.com/wycats/javascript-decorators) (aka ES2016/ES7 decorators [but that's not accurate](https://medium.com/@jayphelps/please-stop-referring-to-proposed-javascript-features-as-es7-cad29f9dcc4b)) inspired by languages that come with built-ins like @​override, @​deprecate, @​autobind, @​mixin and more. Popular with React/Angular, but is framework agnostic. Similar to [Annotations in Java](https://docs.oracle.com/javase/tutorial/java/annotations/predefined.html) but unlike Java annotations, decorators are functions which are applied at runtime.
 
 _*compiled code is intentionally not checked into this repo_
 
@@ -10,41 +10,49 @@ A version compiled to ES5 in CJS format is published to npm as [`core-decorators
 npm install core-decorators --save
 ```
 
-This can be consumed by any transpiler that supports decorators like [babel.js](https://babeljs.io/) or using the recent iterations of TypeScript. To use with babel, you must include the correct babel plugins for decorator [parsing](http://babeljs.io/docs/plugins/syntax-decorators/) and [transformation](http://babeljs.io/docs/plugins/transform-decorators/) or use [stage-1](http://babeljs.io/docs/plugins/preset-stage-1/). *Babel 6 [does not yet support decorators](https://phabricator.babeljs.io/T2645), use Babel 5 until that is fixed.*
+This can be consumed by any transpiler that supports stage-0 of the decorators spec, like [babel.js](https://babeljs.io/) version 5 or using the recent iterations of TypeScript. *Babel 6 [does not yet support decorators](https://phabricator.babeljs.io/T2645), use Babel 5 or the [`applyDecorators()` helper](#applydecorators-helper) until that is fixed.*
+
+##### Bower/globals
+
+A globals version is available [here in the artifact repo](https://github.com/jayphelps/core-decorators-artifacts), or via `$ bower install core-decorators`. It defines a global variable `CoreDecorators`, which can then be used as you might expect: `@CoreDecorators.autobind()`, etc.
+
+I *highly* recommend against using that globals build as it's quite strange you're using decorators (a proposed future feature of JavaScript) while not using ES2015 modules, a spec ratified feature used by nearly every modern framework. Also--[bower is on its deathbed](https://github.com/bower/bower/pull/1748) and IMO for very good reasons.
 
 ## Decorators
 
 ##### For Properties and Methods
 * [@readonly](#readonly)
 * [@nonconfigurable](#nonconfigurable)
-* [@decorate](#decorate) :new:
+* [@decorate](#decorate)
+* [@extendDescriptor](#extenddescriptor) :new:
 
 ##### For Properties
 * [@nonenumerable](#nonenumerable)
-* [@lazyInitialize](#lazyinitialize) :new:
+* [@lazyInitialize](#lazyinitialize)
 
 ##### For Methods
 * [@autobind](#autobind)
 * [@deprecate](#deprecate-alias-deprecated)
 * [@suppressWarnings](#suppresswarnings)
-* [@enumerable](#enumerable) :new:
+* [@enumerable](#enumerable)
 * [@override](#override)
 * [@debounce](#debounce)
-* [@throttle](#throttle) :new:
-* [@time](#time) :new:
+* [@throttle](#throttle)
+* [@time](#time)
 
 ##### For Classes
-* [@autobind](#autobind) :new:
-* [@mixin](#mixin-alias-mixins) :new:
+* [@autobind](#autobind)
+* [@mixin](#mixin-alias-mixins)
 
+## Helpers
 
-##### Proposed (not implemented, PRs welcome!):
-* @assertArguments(arg1 => arg1, arg2 => arg2)
-* @private
+* [applyDecorators()](#applydecorators-helper) :new:
 
 ## Docs
 
 ### @autobind
+
+> Note: there is a bug in `react-hot-reloader <= 1.3.0` (they fixed in [`2.0.0-alpha-4`](https://github.com/gaearon/react-hot-loader/pull/182)) which prevents this from working as expected. [Follow it here](https://github.com/jayphelps/core-decorators.js/issues/48)
 
 Forces invocations of this function to always have `this` refer to the class instance, even if the function is passed around or would otherwise lose its `this` context. e.g. `var fn = context.method;` Popular with React components.
 
@@ -292,22 +300,21 @@ Object.keys(dinner);
 
 ### @nonconfigurable
 
-Marks a property or method so that it cannot be reconfigured, changed, or deleted.
+Marks a property or method so that it cannot be deleted; also prevents it from being reconfigured via `Object.defineProperty`, but **this may not always work how you expect** due to a quirk in JavaScript itself, not this library. Adding the `@readonly` decorator fixes it, but at the cost of obviously making the property readonly (aka `writable: false`). [You can read more about this here.](https://github.com/jayphelps/core-decorators.js/issues/58)
 
 ```js
 import { nonconfigurable } from 'core-decorators';
 
-class Meal {
+class Foo {
   @nonconfigurable
-  entree = 'steak';
+  @readonly
+  bar() {};
 }
 
-var dinner = new Meal();
-
-Object.defineProperty(dinner, 'entree', {
-  enumerable: false
+Object.defineProperty(Foo.prototype, 'bar', {
+  value: 'I will error'
 });
-// Cannot redefine property: entree
+// Cannot redefine property: bar
 
 ```
 
@@ -431,5 +438,66 @@ let myConsole = {
 }
 ```
 
+### @extendDescriptor
+
+Extends the new property descriptor with the descriptor from the super/parent class prototype. Although useful in various circumstances, it's particularly helpful to address the fact that getters and setters share a single descriptor so overriding only a getter or only a setter will blow away the other, without this decorator.
+
+```js
+class Base {
+  @nonconfigurable
+  get foo() {
+    return `hello ${this._foo}`;
+  }
+}
+
+class Derived extends Base {
+  @extendDescriptor
+  set foo(value) {
+    this._foo = value;
+  }
+}
+
+const derived = new Derived();
+derived.foo = 'bar';
+derived.foo === 'hello bar';
+// true
+
+const desc = Object.getOwnPropertyDescriptor(Derived.prototype, 'foo');
+desc.configurable === false;
+// true
+```
+
+### applyDecorators() helper
+
+The `applyDecorators()` helper can be used when you don't have language support for decorators like in Babel 6 or even with vanilla ES5 code without a transpiler.
+
+```js
+class Foo {
+  getFoo() {
+    return this;
+  }
+}
+
+// This works on regular function prototypes
+// too, like `function Foo() {}`
+applyDecorators(Foo, {
+  getFoo: [autobind]
+});
+
+let foo = new Foo();
+let getFoo = foo.getFoo;
+getFoo() === foo;
+// true
+```
+
 # Future Compatibility
-Since most people can't keep up to date with specs, it's important to note that ES2016 (including the decorators spec this relies on) is in-flux and subject to breaking changes. In fact, the [biggest change is coming shortly](https://github.com/wycats/javascript-decorators/pull/36) but I am active in the appropriate communities and will be keeping this project up to date as things progress. For the most part, these changes will usually be transparent to consumers of this project--that said, core-decorators has not yet reached 1.0 and may in fact introduce breaking changes. If you'd prefer not to receive these changes, be sure to lock your dependency to [PATCH](http://semver.org/). You can track the progress of core-decorators@1.0.0 in the [The Road to 1.0](https://github.com/jayphelps/core-decorators.js/issues/15) ticket.
+Since most people can't keep up to date with specs, it's important to note that the spec is in-flux and subject to breaking changes. In fact, the [biggest change is coming shortly](https://github.com/wycats/javascript-decorators/pull/36) but I am active in the appropriate communities and will be keeping this project up to date as things progress. For the most part, these changes will usually be transparent to consumers of this project--that said, core-decorators has not yet reached 1.0 and may in fact introduce breaking changes. If you'd prefer not to receive these changes, be sure to lock your dependency to [PATCH](http://semver.org/). You can track the progress of core-decorators@1.0.0 in the [The Road to 1.0](https://github.com/jayphelps/core-decorators.js/issues/15) ticket.
+
+# Decorator Order Sometimes Matters
+When using multiple decorators on a class, method, or property the order of the decorators sometimes matters. This is a neccesary caveat of decorators because otherwise certain cool features wouldn't be possible. The most common example of this is using `@autobind` and any [Higher-Order Component (HOC)](https://medium.com/@dan_abramov/mixins-are-dead-long-live-higher-order-components-94a0d2f9e750) decorator, e.g. Redux's `@connect`. You must `@autobind` your class first before applying the `@connect` HOC.
+
+```js
+@connect()
+@autobind
+class Foo extends Component {}
+```
